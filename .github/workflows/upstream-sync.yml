@@ -1,0 +1,85 @@
+name: Sync Fork with Upstream
+
+on:
+  schedule:
+    # Run daily at 2 AM UTC (3 AM BST in summer, 2 AM GMT in winter)
+    - cron: '0 2 * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Run in dry-run mode (check only, no sync)'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout fork
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0  # Full history for better merge handling
+
+      - name: Configure Git
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+
+      - name: Check if upstream has new commits
+        id: check
+        run: |
+          # Add upstream remote
+          git remote add upstream https://github.com/TypingMind/typingmind.git
+          git fetch upstream main
+          
+          # Check if we're behind
+          BEHIND=$(git rev-list --count HEAD..upstream/main)
+          echo "commits_behind=$BEHIND" >> $GITHUB_OUTPUT
+          
+          if [ "$BEHIND" -gt 0 ]; then
+            echo "Fork is $BEHIND commits behind upstream"
+            echo "needs_sync=true" >> $GITHUB_OUTPUT
+          else
+            echo "Fork is up to date"
+            echo "needs_sync=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Sync with upstream (dry-run check)
+        if: steps.check.outputs.needs_sync == 'true' && github.event.inputs.dry_run == 'true'
+        run: |
+          echo "DRY RUN: Would sync ${{ steps.check.outputs.commits_behind }} commits"
+          git log --oneline upstream/main ^HEAD
+
+      - name: Sync with upstream
+        if: steps.check.outputs.needs_sync == 'true' && github.event.inputs.dry_run != 'true'
+        run: |
+          # Use GitHub CLI for the sync - most robust approach
+          gh repo sync ${{ github.repository }} --source TypingMind/typingmind
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Verify sync completed
+        if: steps.check.outputs.needs_sync == 'true' && github.event.inputs.dry_run != 'true'
+        run: |
+          git fetch origin main
+          BEHIND_AFTER=$(git rev-list --count HEAD..upstream/main)
+          if [ "$BEHIND_AFTER" -eq 0 ]; then
+            echo "✅ Sync completed successfully"
+          else
+            echo "❌ Sync may have failed - still $BEHIND_AFTER commits behind"
+            exit 1
+          fi
+
+      - name: Summary
+        run: |
+          if [ "${{ steps.check.outputs.needs_sync }}" = "true" ]; then
+            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
+              echo "📋 Dry run completed - ${{ steps.check.outputs.commits_behind }} commits would be synced"
+            else
+              echo "🔄 Synced ${{ steps.check.outputs.commits_behind }} commits from upstream"
+            fi
+          else
+            echo "✨ Fork is already up to date"
+          fi
