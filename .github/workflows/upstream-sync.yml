@@ -6,11 +6,15 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
     inputs:
-      dry_run:
-        description: 'Run in dry-run mode (check only, no sync)'
+      action:
+        description: 'Action to perform'
         required: false
-        default: false
-        type: boolean
+        default: 'sync'
+        type: choice
+        options:
+        - sync
+        - dry-run
+        - force-sync
 
 jobs:
   sync:
@@ -46,24 +50,36 @@ jobs:
             echo "needs_sync=false" >> $GITHUB_OUTPUT
           fi
 
-      - name: Sync with upstream (dry-run check)
-        if: steps.check.outputs.needs_sync == 'true' && github.event.inputs.dry_run == 'true'
+      - name: Show what would be synced (dry-run)
+        if: github.event.inputs.action == 'dry-run'
         run: |
-          echo "DRY RUN: Would sync ${{ steps.check.outputs.commits_behind }} commits"
-          git log --oneline upstream/main ^HEAD
+          if [ "${{ steps.check.outputs.needs_sync }}" = "true" ]; then
+            echo "🔍 DRY RUN: Would sync ${{ steps.check.outputs.commits_behind }} commits"
+            echo "📝 Commits that would be pulled:"
+            git log --oneline upstream/main ^HEAD
+          else
+            echo "✨ Fork is already up to date - nothing to sync"
+          fi
 
-      - name: Sync with upstream
-        if: steps.check.outputs.needs_sync == 'true' && github.event.inputs.dry_run != 'true'
+      - name: Sync with upstream (normal sync)
+        if: (steps.check.outputs.needs_sync == 'true' && github.event.inputs.action != 'dry-run') || github.event.inputs.action == 'force-sync'
         run: |
+          if [ "${{ github.event.inputs.action }}" = "force-sync" ]; then
+            echo "🔄 FORCE SYNC: Syncing regardless of status"
+          else
+            echo "🔄 SYNC: Syncing ${{ steps.check.outputs.commits_behind }} commits"
+          fi
+          
           # Use GitHub CLI for the sync - most robust approach
           gh repo sync ${{ github.repository }} --source TypingMind/typingmind
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Verify sync completed
-        if: steps.check.outputs.needs_sync == 'true' && github.event.inputs.dry_run != 'true'
+        if: (steps.check.outputs.needs_sync == 'true' && github.event.inputs.action != 'dry-run') || github.event.inputs.action == 'force-sync'
         run: |
           git fetch origin main
+          git fetch upstream main
           BEHIND_AFTER=$(git rev-list --count HEAD..upstream/main)
           if [ "$BEHIND_AFTER" -eq 0 ]; then
             echo "✅ Sync completed successfully"
@@ -74,12 +90,22 @@ jobs:
 
       - name: Summary
         run: |
-          if [ "${{ steps.check.outputs.needs_sync }}" = "true" ]; then
-            if [ "${{ github.event.inputs.dry_run }}" = "true" ]; then
-              echo "📋 Dry run completed - ${{ steps.check.outputs.commits_behind }} commits would be synced"
-            else
-              echo "🔄 Synced ${{ steps.check.outputs.commits_behind }} commits from upstream"
-            fi
-          else
-            echo "✨ Fork is already up to date"
-          fi
+          case "${{ github.event.inputs.action }}" in
+            "dry-run")
+              if [ "${{ steps.check.outputs.needs_sync }}" = "true" ]; then
+                echo "📋 Dry run completed - ${{ steps.check.outputs.commits_behind }} commits would be synced"
+              else
+                echo "✨ Fork is already up to date"
+              fi
+              ;;
+            "force-sync")
+              echo "💪 Force sync completed"
+              ;;
+            *)
+              if [ "${{ steps.check.outputs.needs_sync }}" = "true" ]; then
+                echo "🔄 Synced ${{ steps.check.outputs.commits_behind }} commits from upstream"
+              else
+                echo "✨ Fork is already up to date - no sync needed"
+              fi
+              ;;
+          esac
