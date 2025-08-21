@@ -56,7 +56,7 @@ jobs:
       - name: Test application logic (Brave search endpoint)
         run: |
           echo "🔍 Testing Brave search endpoint logic..."
-          response=$(curl -s -w "%{http_code}" \
+          response=$(curl --max-time 30 -s -w "%{http_code}" \
             -X POST \
             -H "Content-Type: application/json" \
             -d '{"q":"github actions health check"}' \
