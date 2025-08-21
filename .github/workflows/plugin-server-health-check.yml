@@ -21,7 +21,7 @@ jobs:
       - name: Test Flask app connectivity
         run: |
           echo "🔍 Testing basic connectivity..."
-          response=$(curl -s -w "%{http_code}" ${{ env.PLUGIN_SERVER_URL }})
+          response=$(curl --max-time 30 -s -w "%{http_code}" ${{ env.PLUGIN_SERVER_URL }})
           status_code=$(echo "$response" | tail -c 4)
           
           if [[ $status_code -eq 404 ]]; then
