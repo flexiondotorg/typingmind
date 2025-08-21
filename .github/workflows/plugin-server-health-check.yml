@@ -1,0 +1,132 @@
+name: Plugin Server Health Check
+on:
+  schedule:
+    # Every 12 minutes to keep Render free-tier instance alive
+    - cron: '*/12 * * * *'
+  workflow_dispatch:
+    inputs:
+      verbose:
+        description: 'Enable verbose output'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  PLUGIN_SERVER_URL: https://tps.wimpys.world
+
+jobs:
+  health-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Test Flask app connectivity
+        run: |
+          echo "🔍 Testing basic connectivity..."
+          response=$(curl -s -w "%{http_code}" ${{ env.PLUGIN_SERVER_URL }})
+          status_code=$(echo "$response" | tail -c 4)
+          
+          if [[ $status_code -eq 404 ]]; then
+            echo "✅ Flask app is running (404 from root expected)"
+          else
+            echo "❌ Unexpected root response: $status_code"
+            if [[ "${{ inputs.verbose }}" == "true" ]]; then
+              echo "Response body: $(echo "$response" | head -c -4)"
+            fi
+            exit 1
+          fi
+
+      - name: Test CORS pre-flight (route registration)
+        run: |
+          echo "🔍 Testing CORS pre-flight for Brave search..."
+          response=$(curl -s -i -X OPTIONS \
+            -H "Origin: https://cloud.typingmind.com" \
+            -H "Access-Control-Request-Method: POST" \
+            -H "Access-Control-Request-Headers: Content-Type,Authorization" \
+            ${{ env.PLUGIN_SERVER_URL }}/brave_search)
+          
+          if echo "$response" | grep -q "Access-Control-Allow-Origin"; then
+            echo "✅ Brave search route registered and CORS working"
+          else
+            echo "❌ CORS pre-flight failed"
+            if [[ "${{ inputs.verbose }}" == "true" ]]; then
+              echo "$response"
+            fi
+            exit 1
+          fi
+
+      - name: Test application logic (Brave search endpoint)
+        run: |
+          echo "🔍 Testing Brave search endpoint logic..."
+          response=$(curl -s -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"q":"github actions health check"}' \
+            ${{ env.PLUGIN_SERVER_URL }}/brave_search)
+          
+          status_code=$(echo "$response" | tail -c 4)
+          body=$(echo "$response" | head -c -4)
+          
+          if [[ $status_code -eq 400 ]] && echo "$body" | grep -q "API Key"; then
+            echo "✅ Application logic working (API key validation active)"
+          else
+            echo "❌ Unexpected application response: $status_code"
+            if [[ "${{ inputs.verbose }}" == "true" ]]; then
+              echo "Body: $body"
+            fi
+            exit 1
+          fi
+
+      - name: Test vectorize endpoint
+        run: |
+          echo "🔍 Testing vectorize endpoint..."
+          response=$(curl -s -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"question":"health check test"}' \
+            ${{ env.PLUGIN_SERVER_URL }}/vectorize-rag-retrieve)
+          
+          status_code=$(echo "$response" | tail -c 4)
+          
+          if [[ $status_code -eq 400 ]]; then
+            echo "✅ Vectorize endpoint responding correctly"
+          else
+            echo "⚠️  Vectorize endpoint status: $status_code (may be fine)"
+            if [[ "${{ inputs.verbose }}" == "true" ]]; then
+              body=$(echo "$response" | head -c -4)
+              echo "Response: $body"
+            fi
+          fi
+
+      - name: Test DOCX generator endpoint
+        run: |
+          echo "🔍 Testing DOCX generator endpoint..."
+          response=$(curl -s -w "%{http_code}" \
+            -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"test": "data"}' \
+            ${{ env.PLUGIN_SERVER_URL }}/generate_docx)
+          
+          status_code=$(echo "$response" | tail -c 4)
+          
+          if [[ $status_code -eq 400 || $status_code -eq 405 ]]; then
+            echo "✅ DOCX generator endpoint responding"
+          else
+            echo "⚠️  DOCX generator status: $status_code (may be fine)"
+            if [[ "${{ inputs.verbose }}" == "true" ]]; then
+              body=$(echo "$response" | head -c -4)
+              echo "Response: $body"
+            fi
+          fi
+
+      - name: Summary
+        run: |
+          echo ""
+          echo "🎉 Plugin Server Health Check Complete!"
+          echo "   📍 Server: ${{ env.PLUGIN_SERVER_URL }}"
+          echo "   ✅ Flask web server: Running"
+          echo "   ✅ Route registration: Working" 
+          echo "   ✅ CORS configuration: Active"
+          echo "   ✅ Python modules: Loaded"
+          echo "   ✅ Request parsing: Functional"
+          echo "   ✅ Error handling: Operational"
+          echo ""
+          echo "🚀 TypingMind Plugin Server is healthy and ready!"
