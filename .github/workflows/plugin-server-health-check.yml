@@ -99,7 +99,7 @@ jobs:
       - name: Test DOCX generator endpoint
         run: |
           echo "🔍 Testing DOCX generator endpoint..."
-          response=$(curl -s -w "%{http_code}" \
+          response=$(curl --max-time 30 -s -w "%{http_code}" \
             -X POST \
             -H "Content-Type: application/json" \
             -d '{"test": "data"}' \
