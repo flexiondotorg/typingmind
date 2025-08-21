@@ -78,7 +78,7 @@ jobs:
       - name: Test vectorize endpoint
         run: |
           echo "🔍 Testing vectorize endpoint..."
-          response=$(curl -s -w "%{http_code}" \
+          response=$(curl --max-time 30 -s -w "%{http_code}" \
             -X POST \
             -H "Content-Type: application/json" \
             -d '{"question":"health check test"}' \
